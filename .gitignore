@@ -12,3 +12,4 @@ wheels/
 # data
 data/*.gz
 data/*.npz
+data/*.zip

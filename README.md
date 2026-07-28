@@ -23,11 +23,15 @@ Card words are the 400 from the base game, at
 https://github.com/Gullesnuffs/Codenames/blob/master/wordlist-eng.txt.
 
 Vectors from ConceptNet Numberbatch, english only, 300d, about 516k terms, 325MB
-gzipped. Picked it over GloVe because GloVe is trained on co-occurrence, so it decides
-two words are related if they turn up in the same Wikipedia article, which gives clues
-that score well and mean nothing to a person. Numberbatch is built off a knowledge graph
-so it's much closer to actual association. Load it behind a thin interface so GloVe can
-be dropped in later and the two compared.
+gzipped. Better than GloVe on its own, because GloVe is trained on co-occurrence and so
+decides two words are related if they turn up in the same Wikipedia article, which gives
+clues that score well and mean nothing to a person. Numberbatch is built off a knowledge
+graph so it's much closer to actual association.
+
+Load GloVe as well though, and keep both. Not to pick a winner - to average over them,
+see below. Shared vocabulary, so a word is only a candidate if both models have it, and
+the four two word cards like ICE CREAM get composed out of their parts for GloVe, which
+has no token for them.
 
 Candidates for the clue itself are the vector vocab intersected with an english
 frequency list, top 30k or so. Without a frequency cut the argmax is always something
@@ -108,6 +112,56 @@ of the number it comes back with, on the grounds that a decent spymaster average
 over 2. That puts it at 0.06, where it says 2 about eighty percent of the time and 3 the
 rest. 0.04 has it saying 3 constantly and 0.10 reduces it to nervous 1s.
 
+Two models, not one:
+
+The sum above assumes the person guessing reads the board the way numberbatch does. They
+don't, and I've no way of knowing how they do read it. So don't commit to one model -
+work out the whole turn value separately under numberbatch and under glove and average
+the two. It's the same expected value argument one level up: uncertain which model your
+partner is running, so marginalise over both instead of betting on one.
+
+Each model ranks the board its own way and that's fine, it should. The spymaster only
+ever says a word and a number, never which words were meant, so each model predicting
+its own guess order is exactly the thing being averaged. Only ever show the numberbatch
+ordering, and only so there's something to read on screen.
+
+Worth it because a clue that only scores well under one model is usually scoring on that
+model's private quirks rather than on anything a person would recognise. Averaging drags
+those down and leaves the clues that work for both. Also gives a way out of the circular
+evaluation problem further down - a guesser built on glove isn't agreeing with a
+numberbatch spymaster by construction.
+
+It changes the answer on eleven boards out of twelve, so it isn't cosmetic. Mostly for
+the better - NHL becomes HOCKEY, PUSS becomes PET, PRESSURIZED 3 becomes PUMP 2, all
+cases of numberbatch liking a word that glove had no particular time for. Not uniformly
+though. MERMAID 2 for princess and dragon went to DUCHESS 1, which is worse and more
+timid, and that's the trade: insisting a clue work in two heads at once costs you the
+clever ones that only work in one.
+
+Two things had to move to make it work. The place filter now runs on both models rather
+than just numberbatch, because glove is co-occurrence and therefore far worse for this,
+and filtering only numberbatch let ARIZONA and CAIRO walk back in through the average.
+And t came down by a third, see above.
+
+The safety limits go the other way, worst case across the models rather than averaged. A
+bound that only holds if your partner happens to think like numberbatch isn't a bound.
+
+Cap the opponent too, not just the assassin:
+
+Total probability mass sitting on their words, capped at 15%, which is the chance they
+open the turn by handing over a card. The EV already prices opponent words in through
+the cost of a miss, but that's a mean, and a mean will happily accept a fair chance of
+giving one away in exchange for a good enough upside. Same argument as the assassin,
+looser limit because the loss is a card rather than the game.
+
+Being honest about it though, it doesn't currently do anything. Over 60 boards the
+winning clue never got near either limit - worst was 8.9% on the opponent against a cap
+of 15%, and 2.1% on the assassin against 5%. The caps throw out about 95% of the
+candidate list but every one of those was already scoring badly on EV, so the clue that
+comes out the top is the same with them and without them. They're insurance against a
+board where the best scoring clue is also a dangerous one, which hasn't come up yet.
+Leaving them in on that basis, not because they're earning their keep.
+
 How do we decide how many words to go for?
 
 Falls out of the same sum. Work out EV for n = 1, 2, 3 and so on, take the best. No need
@@ -131,7 +185,11 @@ Running it:
     uv sync
     curl -L -o data/numberbatch-en.txt.gz \
       https://conceptnet.s3.amazonaws.com/downloads/2019/numberbatch/numberbatch-en-19.08.txt.gz
+    curl -L -o data/glove.6B.zip https://nlp.stanford.edu/data/glove.6B.zip
     uv run main.py
+
+Both downloads are big, 325MB and 862MB, and both are read straight out of the archive
+rather than unpacked.
 
 Deals a board, draws it with the key colours on, then enter for the next clue, n for a
 new board, q to quit. First run builds a cache off the gz and takes a few seconds. The
@@ -166,10 +224,9 @@ border colour before it's allowed to say anything.
 
 Still to sort out:
 
-The place filter only gets the small towns. Big cities are far enough from COUNTY and
-TOWNSHIP to survive, so it'll still offer OTTAWA for canada and buffalo. That one's
-arguably fair enough, CALIFORNIA for phoenix, orange and england isn't. Personal names
-get through too, RUFUS and CHEVALIER both turn up.
+Personal names still get through. RUFUS, CHEVALIER, and DENZEL for hollywood and
+washington, which is at least funny. Can't reuse the place trick, the name direction
+takes PRINCESS and KNIGHT down with it, so it needs something else.
 
 The legality check is crude and knows it. Stems, british spellings and prefixes, so it
 gets CENTRE for CENTER and BRIDGING for BRIDGE, but LAB and LABORATORY only because the

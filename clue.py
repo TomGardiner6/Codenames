@@ -5,20 +5,31 @@ from dataclasses import dataclass
 import numpy as np
 
 from board import OURS, THEIRS, NEUTRAL, ASSASSIN
-from vectors import term
+from vectors import SOURCES, term
 
-# Temperature, in raw cosine. Do NOT scale this by the spread of the clue over
-# the board - that was the first thing I tried and it's actively wrong, because
-# it normalises away the difference between a strong clue and a weak one. PET is
-# 0.75 to DOG and RUFUS is 0.24 to CAT, and after dividing by each one's own
-# spread they look about the same. The absolute number is the whole signal.
-TAU = 0.06
+# Temperature, in raw cosine, per model. Do NOT scale this by the spread of the
+# clue over the board - that was the first thing I tried and it's actively wrong,
+# because it normalises away the difference between a strong clue and a weak one.
+# PET is 0.75 to DOG and RUFUS is 0.24 to CAT, and after dividing by each one's
+# own spread they look about the same. The absolute number is the whole signal.
+# Separate values per model because glove's cosines run on a different scale -
+# glove's board spread is about 1.29x numberbatch's, so its t is scaled to match.
+#
+# Both are lower than the 0.06 that was right for numberbatch on its own.
+# Averaging two models is a stricter test than passing one, so at the old value
+# it turned timid and the mean number fell to 1.9. Recalibrated the same way as
+# before, on the distribution of numbers over 60 boards, back to about 2.2.
+TAU = {"numberbatch": 0.042, "glove": 0.055}
 
 VALUE = {OURS: 1.0, THEIRS: -1.4, NEUTRAL: -0.4, ASSASSIN: -10.0}
 
 # EV is an average, and I don't want it trading a small chance of losing outright
 # against a nice clue, so the assassin gets a hard limit as well as a bad value.
+# Same argument for the opponent, only the loss is a card rather than the game,
+# so the limit is looser. Both are worst case over the models, not averaged - the
+# point of a safety bound is that it holds whoever is reading the clue.
 MAX_ASSASSIN_RISK = 0.05
+MAX_ENEMY_MASS = 0.15
 
 SUFFIXES = ("ations", "ation", "ings", "ing", "ers", "er", "ies", "ied",
             "es", "ed", "ly", "ness", "ment", "re", "s")
@@ -37,6 +48,7 @@ class Clue:
     targets: list
     ev: float
     risk: float
+    enemy: float
 
 
 def respell(w):
@@ -77,9 +89,10 @@ def illegal(clue, board_terms):
     return False
 
 
-def rank(board, vec, top=10, tau=TAU, value=VALUE, max_risk=MAX_ASSASSIN_RISK):
-    sims = vec.matrix @ vec.card_vectors(board.words).T
-    sims -= vec.baseline[:, None]  # the "close to everything" correction
+def _model_ev(board, model, vec, tau, value):
+    """What saying (clue, n) is worth if your partner reads it with this model."""
+    sims = model.matrix @ vec.card_vectors(model, board.words).T
+    sims -= model.baseline[:, None]  # the "close to everything" correction
 
     z = sims / tau
     z -= z.max(axis=1, keepdims=True)  # p is a ratio, so this is free
@@ -102,12 +115,35 @@ def rank(board, vec, top=10, tau=TAU, value=VALUE, max_risk=MAX_ASSASSIN_RISK):
     before = np.concatenate([ones, np.cumprod(p, axis=1)[:, :-1]], axis=1)
     ev = np.cumsum(before * (p * value[OURS] + (1 - p) * miss), axis=1)
 
-    n = ev.argmax(axis=1)
-    best = ev[np.arange(len(ev)), n]
-
     assassin = board.key.index(ASSASSIN)
     risk = w[:, assassin] / (w[:, assassin] + ow[:, 0])
-    best = np.where(risk > max_risk, -np.inf, best)
+    theirs = [i for i in range(25) if board.key[i] == THEIRS]
+    enemy = w[:, theirs].sum(axis=1) / w.sum(axis=1)
+    return ev, order, risk, enemy
+
+
+def rank(board, vec, top=10, tau=TAU, value=VALUE,
+         max_risk=MAX_ASSASSIN_RISK, max_enemy=MAX_ENEMY_MASS):
+    """Average the turn value over the models, on the grounds that we don't know
+    which one the person across the table is running."""
+    evs, risks, enemies, orders = [], [], [], {}
+    for m in vec.models:
+        ev, order, risk, enemy = _model_ev(board, m, vec, tau[m.name], value)
+        evs.append(ev)
+        risks.append(risk)
+        enemies.append(enemy)
+        orders[m.name] = order
+
+    ev = np.mean(evs, axis=0)
+    risk = np.max(risks, axis=0)      # a safety bound has to hold for either
+    enemy = np.max(enemies, axis=0)
+
+    n = ev.argmax(axis=1)
+    best = ev[np.arange(len(ev)), n]
+    best = np.where((risk > max_risk) | (enemy > max_enemy), -np.inf, best)
+
+    ours = board.indices(OURS)
+    order = orders[SOURCES[0]]  # only for showing which words were meant
 
     # legality is a slow per word check, so only do it on the way down the list
     board_terms = [term(x) for x in board.words]
@@ -125,6 +161,7 @@ def rank(board, vec, top=10, tau=TAU, value=VALUE, max_risk=MAX_ASSASSIN_RISK):
             targets=[board.words[ours[j]] for j in order[i, :k]],
             ev=float(best[i]),
             risk=float(risk[i]),
+            enemy=float(enemy[i]),
         ))
         if len(out) >= top:
             break

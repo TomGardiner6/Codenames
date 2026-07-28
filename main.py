@@ -25,7 +25,7 @@ def draw(board):
 def draw_clue(c, i):
     head = f"{INK[OURS]} {c.word} {c.number} {RESET}"
     print(f"  {i:>2}. {head}  {' · '.join(t.lower() for t in c.targets)}")
-    print(f"      ev {c.ev:.2f}   assassin {c.risk:.1%}")
+    print(f"      ev {c.ev:.2f}   assassin {c.risk:.1%}   enemy {c.enemy:.1%}")
 
 
 def main():
