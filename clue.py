@@ -72,6 +72,15 @@ def roots(w):
     return seen
 
 
+def _shared(a, b):
+    n = 0
+    for x, y in zip(a, b):
+        if x != y:
+            break
+        n += 1
+    return n
+
+
 def illegal(clue, board_terms):
     """No saying a word that's on the table, or anything that's obviously it again.
 
@@ -85,6 +94,14 @@ def illegal(clue, board_terms):
             if cr & roots(part):
                 return True
             if len(part) >= 3 and (clue.startswith(part) or part.startswith(clue)):
+                return True
+            # CANADIANS for CANADA. Shares CANAD then goes its own way, so it's
+            # neither a stem match nor a prefix, and it sailed through both of
+            # the tests above in an actual game. Catch the case where one word
+            # is basically the stem and the other carries on past it.
+            n = _shared(clue, part)
+            if (n >= 4 and min(len(clue), len(part)) - n <= 1
+                    and max(len(clue), len(part)) - n >= 2):
                 return True
     return False
 

@@ -254,7 +254,23 @@ Still to sort out:
 
 Personal names still get through. RUFUS, CHEVALIER, and DENZEL for hollywood and
 washington, which is at least funny. Can't reuse the place trick, the name direction
-takes PRINCESS and KNIGHT down with it, so it needs something else.
+takes PRINCESS and KNIGHT down with it, so it needs something else. Cities get through
+too, TBILISI turned up for MOSCOW in a real game and SAVILE for ROW.
+
+Playing a game through is worth more than any amount of staring at the top clue. Three
+things came out of the first one that hadn't shown up otherwise:
+
+CANADIANS for the board word CANADA, which is illegal and which both legality tests
+waved through. They share CANAD and then diverge, so it's neither a stem match nor a
+prefix of anything. Fixed, but it took a game to find.
+
+PEDAGOGICAL meaning PUPIL and MOSCOW, which is Moscow State Pedagogical University. That
+one hurts, because it's precisely the appears-in-the-same-article link that pairing
+numberbatch with glove was meant to suppress, and instead it came through the average.
+
+GALAXY meaning DWARF and PHOENIX, which is correct - the Phoenix Dwarf Galaxy is a real
+thing - and useless, because nobody picks PHOENIX over MERCURY there. Being right isn't
+the same as being understood, and nothing in the scoring can tell the two apart.
 
 The legality check is crude and knows it. Stems, british spellings and prefixes, so it
 gets CENTRE for CENTER and BRIDGING for BRIDGE, but LAB and LABORATORY only because the
