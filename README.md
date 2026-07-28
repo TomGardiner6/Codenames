@@ -250,6 +250,29 @@ Real risk isn't reading it, it's getting the key card rotated 90 degrees against
 board and then confidently playing a mirrored game. Wants an orientation check off the
 border colour before it's allowed to say anything.
 
+Sweeping it:
+
+Ran 200 boards at five stages of play each, both teams, top three clues, about 3800
+clues over 1300 positions. Checked the structural things - number matches the targets,
+targets are all own live words, never more than there are left, risk and enemy inside
+their caps, EV finite, clue not a word on the table. Nothing failed, and nothing has.
+
+The legality audit is the part worth copying. Checking illegal() with illegal() proves
+nothing, so the sweep runs a separate deliberately greedy test - substring either way,
+four shared letters, edit distance two - and prints what illegal() let past it. Almost
+all of it is noise, PANDA against CANADA and PIVOT against PILOT and so on, but reading
+the noise is how the real ones turn up. Two classes did:
+
+BONFIRE for FIRE, RASPBERRY for BERRY, EMAIL for MAIL. The prefix test only ever looked
+at the front of the word, so anything with a board word buried in the middle or the end
+went straight through. Twenty odd of them.
+
+PIRACY for PIRATE, SWUNG for SWING, HIMALAYAN for HIMALAYAS. These can't be caught on
+spelling, because BOTTOM and BOTTLE are exactly as alike as PIRACY and PIRATE, and PIVOT
+and PILOT are one letter apart same as SWUNG and SWING. Needs the meaning as well. Same
+word lands between 0.69 and 0.84 similarity, lookalikes stop at 0.44, so spelled alike
+and meaning the same is the test and there's a wide gap to put the line in.
+
 Still to sort out:
 
 Personal names still get through. RUFUS, CHEVALIER, and DENZEL for hollywood and
@@ -274,7 +297,13 @@ the same as being understood, and nothing in the scoring can tell the two apart.
 
 The legality check is crude and knows it. Stems, british spellings and prefixes, so it
 gets CENTRE for CENTER and BRIDGING for BRIDGE, but LAB and LABORATORY only because the
-prefix rule is blunt enough to take CARBON for CAR down with it.
+prefix rule is blunt enough to take CARBON for CAR down with it. Containment costs the
+odd ORCHESTRA when CHEST is out, on the same argument.
+
+Acronyms get through - AOL, MGM, NHL, USB, WAV. Legal, and some are decent, MGM for
+hollywood and casino is a clue I'd give. But the rulebook leaves acronyms to the table
+and I haven't decided. Nothing filters them at the moment because the vocabulary is
+lowercased by the time we see it, so there's no capitalisation left to go on.
 
 No good way to tell if it's any good yet. Self-play is circular - a guesser built on the
 same vectors agrees with the spymaster by construction, so it would score near perfect

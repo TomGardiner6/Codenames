@@ -48,6 +48,14 @@ PLACE_SEEDS = ("county", "township", "municipality", "borough", "suburb", "villa
                "hometown", "mayor", "riverside", "springfield", "hampshire", "birthplace")
 PLACE_CUT = 0.12  # drop the most place-like eighth of the vocabulary, per model
 
+# An english frequency list is not a list of english words. Enough german and
+# french leaks into english text that DER, EINE, IST and QUE are all in the top
+# 30k, and it offered DER for GERMANY and VAN in a real game. If a word is much
+# commoner somewhere else than it is here, it isn't ours. 2.5 catches those and
+# stops short of TEMPO, RAPPORT and PERSONA, which are.
+FOREIGN_LANGS = ("de", "fr", "es", "it", "nl", "pt")
+FOREIGN_GAP = 2.5
+
 
 @dataclass
 class Model:
@@ -111,7 +119,11 @@ def _compose(t, found):
 
 
 def build():
-    from wordfreq import top_n_list
+    from wordfreq import top_n_list, zipf_frequency
+
+    def english(w):
+        return max(zipf_frequency(w, l) for l in FOREIGN_LANGS) \
+            - zipf_frequency(w, "en") < FOREIGN_GAP
 
     for s in SOURCES:
         if not RAW[s].exists():
@@ -122,7 +134,7 @@ def build():
     # Common english only. Without this the argmax is always some obscure exact
     # synonym, which scores beautifully and tells your team nothing.
     common = [w for w in top_n_list("en", CLUE_VOCAB * 3)
-              if len(w) >= 3 and w.isalpha() and w.isascii()]
+              if len(w) >= 3 and w.isalpha() and w.isascii() and english(w)]
 
     wanted = set(common) | set(cards) | {p for c in cards for p in c.split("_")}
     found = {s: _read(RAW[s], wanted) for s in SOURCES}

@@ -31,6 +31,12 @@ VALUE = {"own": 1.0, "opponent": -1.4, "neutral": -0.4, "assassin": -10.0}
 MAX_ASSASSIN_RISK = 0.05
 MAX_ENEMY_MASS = 0.15
 
+# Two words spelled alike and meaning the same thing are the same word. Neither
+# half works alone: CENTRE/CENTER sit at 0.85 and so do KITTEN/CAT, and
+# BOTTOM/BOTTLE look as alike as PIRACY/PIRATE. Together they separate cleanly,
+# same word lands 0.69 to 0.84 and lookalikes top out at 0.44.
+SAME_WORD_SIM = 0.55
+
 SUFFIXES = ("ations", "ation", "ings", "ing", "ers", "er", "ies", "ied",
             "es", "ed", "ly", "ness", "ment", "re", "s")
 
@@ -95,6 +101,11 @@ def illegal(clue, board_terms):
                 return True
             if len(part) >= 3 and (clue.startswith(part) or part.startswith(clue)):
                 return True
+            # BONFIRE for FIRE, RASPBERRY for BERRY. The prefix test only looked
+            # at the front, so anything with the board word buried in it walked
+            # straight through. Costs the odd ORCHESTRA when CHEST is out.
+            if len(part) >= 4 and part in clue:
+                return True
             # CANADIANS for CANADA. Shares CANAD then goes its own way, so it's
             # neither a stem match nor a prefix, and it sailed through both of
             # the tests above in an actual game. Catch the case where one word
@@ -114,6 +125,31 @@ def outcome(role, team):
     if role == NEUTRAL:
         return "neutral"
     return "opponent"
+
+
+def _edit(a, b):
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def same_word(clue, board_terms, sims):
+    """Spelled alike and meaning the same. Catches what spelling alone can't:
+    PIRACY/PIRATE and BOTTOM/BOTTLE are equally alike on paper, and SWUNG/SWING
+    and PIVOT/PILOT are both one letter apart. The similarity tells them apart."""
+    for k, b in enumerate(board_terms):
+        if sims[k] < SAME_WORD_SIM:
+            continue
+        for part in b.split("_"):
+            if _shared(clue, part) >= 4 or _edit(clue, part) <= 2:
+                return True
+    return False
 
 
 def _model_ev(board, model, vec, tau, value, team, live):
@@ -186,12 +222,16 @@ def rank(board, vec, team, top=10, tau=TAU, value=VALUE,
     # A word that's been turned over is covered up, so it's fair game as a clue.
     # Legality is a slow per word check, so only do it on the way down the list.
     board_terms = [term(board.words[i]) for i in live]
+    nb = vec.models[0]
+    # raw cosine, not the baseline corrected version, for the same word test
+    raw = nb.matrix @ vec.card_vectors(nb, [board.words[i] for i in live]).T
+
     out = []
     for i in np.argsort(-best):
         if not np.isfinite(best[i]):
             break
         word = str(vec.clues[i])
-        if illegal(word, board_terms):
+        if illegal(word, board_terms) or same_word(word, board_terms, raw[i]):
             continue
         k = int(n[i]) + 1
         out.append(Clue(
