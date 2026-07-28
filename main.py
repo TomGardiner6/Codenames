@@ -20,13 +20,8 @@ def header(board, team):
 def draw(t, board, team, clue, left, note):
     body = [header(board, team), "", grid(board)]
     if clue:
-        # A clue of n gets n+1 guesses, the last one being the bonus. That's the
-        # actual rule and not an off by one, but it reads like one, so say it.
-        total = clue.number + 1
-        this = total - left + 1
-        bonus = "  (the bonus)" if this == total else ""
         body.append(f"  {INK[team]} {clue.word} {clue.number} {RESET}"
-                    f"   +1 bonus, so guess {this} of {total}{bonus}")
+                    f"   guess {clue.number - left + 1} of {clue.number}")
     else:
         body.append("  no clue passes the safety limits, turn passes")
     body += ["", f"  {note}" if note else "", f"  {HELP}"]
@@ -68,7 +63,11 @@ def play(t, board, vec):
     while True:
         clues = rank(board, vec, team, top=1)
         clue = clues[0] if clues else None
-        left = clue.number + 1 if clue else 0
+        # The rules give you the number plus a bonus guess. Not having it, the
+        # number is what it means and the number is what you get. The scoring
+        # agrees - EV only ever sums the first n guesses, so the bonus was never
+        # priced in anyway and the game now matches the maths behind it.
+        left = clue.number if clue else 0
         picked = []
 
         while left > 0:
