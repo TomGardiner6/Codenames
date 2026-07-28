@@ -34,33 +34,69 @@ frequency list, top 30k or so. Without a frequency cut the argmax is always some
 like "cetacean" - genuinely the nearest word, useless as a clue. Also drop anything
 sharing a stem with a board word, or it just answers OCEANS for OCEAN.
 
+Size is a non issue. The whole vocab is 620MB at float32 and the 30k we keep is 36MB, so
+it all sits in memory and the search is one matmul.
+
+Boards are dealt at random from the 400 for now.
+
 Scoring:
 
 Since the other player may make mistakes, we should simply optimise for each turn in
 isolation.
 
-The thing to score against is that the operative works down the board in order of how
-related each word looks, so what matters is the ranking, not the total. A clue works
-exactly as long as every word we're going for sits above every word we're not. So score
-the margin - worst target minus best bad word - rather than summing similarities. A sum
-will happily hide a lethal assassin behind three excellent targets.
+Raw cosine is the wrong scale to score on. The gap between 0.85 and 0.80 is worth
+almost nothing because they'll get both, and the gap between 0.30 and 0.25 is worth
+nothing either because they'll get neither. Only the gaps in the middle, where it flips
+from no to yes, decide anything. So similarity has to go through something saturating
+before it becomes a score, or the search spends all its effort making obvious things
+more obvious and irrelevant things more irrelevant.
 
-Bad words aren't equal, so they get different weights: neutral is a wasted turn,
-opponent is a wasted turn plus a free card for them, assassin is the game. Assassin
-wants a hard floor rather than a weight, reject the clue outright if it ranks anywhere
-near the targets.
+Rather than pick a squashing function out of the air, model what the operative actually
+does. They rank the board by how related each word looks and work down the list. Take
+that as a soft ranking, each word getting weight
+
+    w = exp(s / t)
+
+for similarity s and a temperature t setting how sharply people discriminate. Then for
+one of our words, the chance it comes up before any bad word at all is
+
+    p = w / (w + sum of w over all the bad words)
+
+which is exact if the ranking really is drawn that way, and is a sigmoid in the gap
+between that word and the bad ones. So it saturates at both ends by construction, which
+is the property we were after. It's relative rather than absolute, so a clue only has to
+beat this board rather than clear some fixed bar. And the assassin sitting close raises
+the bar for every target at once through the denominator, with no separate term for it.
+
+The turn is then just: keep going while we keep hitting our own.
+
+    EV = sum over k of (product of p_i for i < k) * (p_k * 1 + (1 - p_k) * cost of a miss)
+
+Cost of a miss is the average over the bad words weighted by how likely each is to be
+the one hit, which is exp(s/t) again. Neutral costs about -0.4, a wasted turn. Opponent
+about -1.4, a wasted turn plus a card for them. Assassin about -10, and on top of that a
+hard reject above a few percent, because EV is an average and I don't want it trading a
+small chance of losing outright against a nice clue.
+
+Two corrections before this works on real data. Some clue words are close to everything,
+usually the common abstract ones, so subtract the clue's mean similarity to a fixed
+reference sample first or those win every board. And t should scale with the spread of
+similarities on the board rather than being fixed in cosine units.
+
+t is the only parameter that really matters and it has a meaning - the similarity gap at
+which a person is about 73% likely to prefer one word over the other. Guess it, then
+tune by hand on real boards.
 
 How do we decide how many words to go for?
 
-Falls out of the ranking. For each candidate clue, sort all 25 board words by similarity,
-walk down from the top and count how many of ours you get through before you hit
-something that isn't. That count is the number. No need for a separate bonus for going
-wide, the count already rewards it, and it can't talk itself into a 5 that dies on the
-second guess.
+Falls out of the same sum. Work out EV for n = 1, 2, 3 and so on, take the best. No need
+for a bonus for going wide: a good extra target adds a nearly free +1, and a bad one
+contributes p * 1 + (1 - p) * something negative, which goes negative on its own once p
+drops. So it stops where it should without being told to.
 
-That's a hard cutoff and real people don't rank things that precisely, so later on it's
-worth softening into a probability of the operative agreeing with the order, and taking
-an expected number of correct guesses instead. Not for the first version.
+That replaces the earlier idea of walking down the ranking and counting how many of ours
+you clear before hitting a bad one. Same function with t = 0, and this is the softened
+version of it.
 
 Search:
 
@@ -77,6 +113,25 @@ Layout:
     clue.py     the search
     main.py     cli
 
+Later:
+
+Point the phone at the table and read the board off a photo instead of typing it in. The
+25 words are the easy half, and knowing all 400 possible words makes it easier still -
+OCR whatever it gives and fuzzy match each result against the list, so RUER comes back as
+RULER on its own. Don't need good OCR, just OCR plus the constraint.
+
+The key card is a different problem, no text on it at all, just a 5x5 of red, blue, beige
+and black. Find the card, warp it square, sample the middle of each cell. Don't threshold
+the colours independently though, lighting will ruin that - beige against white, red
+against orange under a warm bulb. The card always has exactly 9, 8, 7 and 1, so cluster
+the 25 cells and solve for the assignment matching those counts. Never has to know what
+red is in the absolute, only which cells look like each other, so it should survive more
+or less any white balance.
+
+Real risk isn't reading it, it's getting the key card rotated 90 degrees against the
+board and then confidently playing a mirrored game. Wants an orientation check off the
+border colour before it's allowed to say anything.
+
 Still to sort out:
 
 Proper nouns and multi-word terms are allowed for now, which means Numberbatch entries
@@ -88,5 +143,5 @@ same vectors agrees with the spymaster by construction, so it would score near p
 and prove nothing. Start by eyeballing 20 boards, and if that isn't enough, build the
 guesser on a different embedding to the spymaster.
 
-The bad-word weights and the assassin floor need tuning by hand. Don't see a way around
-that.
+t, the card values and the assassin floor all need tuning by hand. Don't see a way around
+that, though t is the one to spend the time on, the rest are roughly right by argument.
