@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from board import OURS, THEIRS, NEUTRAL, ASSASSIN
+from board import NEUTRAL, ASSASSIN
 from vectors import SOURCES, term
 
 # Temperature, in raw cosine, per model. Do NOT scale this by the spread of the
@@ -21,7 +21,7 @@ from vectors import SOURCES, term
 # before, on the distribution of numbers over 60 boards, back to about 2.2.
 TAU = {"numberbatch": 0.042, "glove": 0.055}
 
-VALUE = {OURS: 1.0, THEIRS: -1.4, NEUTRAL: -0.4, ASSASSIN: -10.0}
+VALUE = {"own": 1.0, "opponent": -1.4, "neutral": -0.4, "assassin": -10.0}
 
 # EV is an average, and I don't want it trading a small chance of losing outright
 # against a nice clue, so the assassin gets a hard limit as well as a bad value.
@@ -89,18 +89,34 @@ def illegal(clue, board_terms):
     return False
 
 
-def _model_ev(board, model, vec, tau, value):
-    """What saying (clue, n) is worth if your partner reads it with this model."""
-    sims = model.matrix @ vec.card_vectors(model, board.words).T
+def outcome(role, team):
+    if role == team:
+        return "own"
+    if role == ASSASSIN:
+        return "assassin"
+    if role == NEUTRAL:
+        return "neutral"
+    return "opponent"
+
+
+def _model_ev(board, model, vec, tau, value, team, live):
+    """What saying (clue, n) is worth if your partner reads it with this model.
+
+    Only over the cards still face down. A word that's been turned over is off
+    the table and can't be guessed again, so it shouldn't be scaring the search
+    off a clue or soaking up probability mass.
+    """
+    sims = model.matrix @ vec.card_vectors(model, [board.words[i] for i in live]).T
     sims -= model.baseline[:, None]  # the "close to everything" correction
 
     z = sims / tau
     z -= z.max(axis=1, keepdims=True)  # p is a ratio, so this is free
     w = np.exp(z)
 
-    ours = board.indices(OURS)
-    bad = [i for i in range(25) if board.key[i] != OURS]
-    bad_value = np.array([value[board.key[i]] for i in bad])
+    kinds = [outcome(board.key[i], team) for i in live]
+    ours = [k for k, o in enumerate(kinds) if o == "own"]
+    bad = [k for k, o in enumerate(kinds) if o != "own"]
+    bad_value = np.array([value[kinds[k]] for k in bad])
 
     bw = w[:, bad]
     w_bad = bw.sum(axis=1, keepdims=True)
@@ -113,22 +129,27 @@ def _model_ev(board, model, vec, tau, value):
     p = ow / (ow + w_bad)
     ones = np.ones((len(p), 1))
     before = np.concatenate([ones, np.cumprod(p, axis=1)[:, :-1]], axis=1)
-    ev = np.cumsum(before * (p * value[OURS] + (1 - p) * miss), axis=1)
+    ev = np.cumsum(before * (p * value["own"] + (1 - p) * miss), axis=1)
 
-    assassin = board.key.index(ASSASSIN)
-    risk = w[:, assassin] / (w[:, assassin] + ow[:, 0])
-    theirs = [i for i in range(25) if board.key[i] == THEIRS]
+    kill = [k for k, o in enumerate(kinds) if o == "assassin"]
+    risk = (w[:, kill[0]] / (w[:, kill[0]] + ow[:, 0]) if kill
+            else np.zeros(len(w)))
+    theirs = [k for k, o in enumerate(kinds) if o == "opponent"]
     enemy = w[:, theirs].sum(axis=1) / w.sum(axis=1)
     return ev, order, risk, enemy
 
 
-def rank(board, vec, top=10, tau=TAU, value=VALUE,
+def rank(board, vec, team, top=10, tau=TAU, value=VALUE,
          max_risk=MAX_ASSASSIN_RISK, max_enemy=MAX_ENEMY_MASS):
     """Average the turn value over the models, on the grounds that we don't know
     which one the person across the table is running."""
+    live = board.live()
+    if not [i for i in live if board.key[i] == team]:
+        return []
+
     evs, risks, enemies, orders = [], [], [], {}
     for m in vec.models:
-        ev, order, risk, enemy = _model_ev(board, m, vec, tau[m.name], value)
+        ev, order, risk, enemy = _model_ev(board, m, vec, tau[m.name], value, team, live)
         evs.append(ev)
         risks.append(risk)
         enemies.append(enemy)
@@ -142,11 +163,12 @@ def rank(board, vec, top=10, tau=TAU, value=VALUE,
     best = ev[np.arange(len(ev)), n]
     best = np.where((risk > max_risk) | (enemy > max_enemy), -np.inf, best)
 
-    ours = board.indices(OURS)
+    ours = [i for i in live if board.key[i] == team]
     order = orders[SOURCES[0]]  # only for showing which words were meant
 
-    # legality is a slow per word check, so only do it on the way down the list
-    board_terms = [term(x) for x in board.words]
+    # A word that's been turned over is covered up, so it's fair game as a clue.
+    # Legality is a slow per word check, so only do it on the way down the list.
+    board_terms = [term(board.words[i]) for i in live]
     out = []
     for i in np.argsort(-best):
         if not np.isfinite(best[i]):
@@ -158,7 +180,7 @@ def rank(board, vec, top=10, tau=TAU, value=VALUE,
         out.append(Clue(
             word=word.upper(),
             number=k,
-            targets=[board.words[ours[j]] for j in order[i, :k]],
+            targets=[board.words[ours[j]] for j in order[i, :k]],  # nb's ordering
             ev=float(best[i]),
             risk=float(risk[i]),
             enemy=float(enemy[i]),

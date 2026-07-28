@@ -1,76 +1,101 @@
-"""codenames spymaster. run it, look at the board, hit enter for clues."""
+"""codenames. it spymasters for both sides, you do the guessing for both."""
 
 import argparse
 import random
-import shutil
 
-from board import Board, grid, keycard, side_by_side, INK, OURS, RESET
+from board import (Board, FIRST, INK, NAMES, RED, BLUE, ASSASSIN, RESET,
+                   cell_at, grid, keycard, other, side_by_side, winner)
 from clue import rank
+from term import CLEAR, HIDE_CURSOR, Terminal
 from vectors import Vectors, card_words
 
-HELP = "  enter  next clue    n  new board    b  redraw    q  quit"
+HELP = "click a card, or type it. enter to stop guessing, q to give up."
 
 
-def draw(board):
-    left, right = grid(board), keycard(board)
-    print()
-    if shutil.get_terminal_size().columns >= 100:
-        print(side_by_side(left, right))
+def header(board, team):
+    score = "  ".join(f"{INK[t]} {NAMES[t]} {board.left(t)} left {RESET}" for t in (RED, BLUE))
+    return f"{score}   {NAMES[team]} to guess"
+
+
+def draw(t, board, team, clue, left, note):
+    body = [header(board, team), "", grid(board)]
+    if clue:
+        body.append(f"  {INK[team]} {clue.word} {clue.number} {RESET}"
+                    f"   {left} guess{'' if left == 1 else 'es'} left")
     else:
-        print(left)
-        print(right)
-        print()
+        body.append("  no clue passes the safety limits, turn passes")
+    body += ["", f"  {note}" if note else "", f"  {HELP}"]
+    t.write(CLEAR + HIDE_CURSOR + "\n".join(body) + "\n")
 
 
-def draw_clue(c, i):
-    head = f"{INK[OURS]} {c.word} {c.number} {RESET}"
-    print(f"  {i:>2}. {head}  {' · '.join(t.lower() for t in c.targets)}")
-    print(f"      ev {c.ev:.2f}   assassin {c.risk:.1%}   enemy {c.enemy:.1%}")
+def finish(t, board, won, why):
+    board.revealed = set(range(25))
+    body = [f"{INK[won]} {NAMES[won]} wins {RESET}  {why}", "",
+            side_by_side(grid(board, reveal_all=True), keycard(board)),
+            "", "  any key"]
+    t.write(CLEAR + "\n".join(body) + "\n")
+    t.read()
+
+
+def play(t, board, vec):
+    team = FIRST
+    note = ""
+    while True:
+        clues = rank(board, vec, team, top=1)
+        clue = clues[0] if clues else None
+        left = clue.number + 1 if clue else 0
+
+        while left > 0:
+            draw(t, board, team, clue, left, note)
+            note = ""
+            kind, val = t.read("  > ")
+
+            if kind == "click":
+                i = cell_at(*val)
+                if i is None or i in board.revealed:
+                    continue
+            else:
+                said = val.strip().lower()
+                if said in ("q", "quit"):
+                    return None
+                if said == "":
+                    break
+                i = board.find(said)
+                if i is None:
+                    note = f"there's no {said} on the table"
+                    continue
+                if i in board.revealed:
+                    note = "that one's already turned over"
+                    continue
+
+            board.revealed.add(i)
+            role, word = board.key[i], board.words[i]
+            if role == ASSASSIN:
+                return finish(t, board, other(team), f"{NAMES[team]} found the assassin")
+            done = winner(board)
+            if done is not None:
+                return finish(t, board, done, "all their cards found")
+            if role != team:
+                note = f"{word} was {NAMES[role]}, turn over"
+                break
+            left -= 1
+            note = f"{word}, yes"
+
+        team = other(team)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int)
-    ap.add_argument("--top", type=int, default=25)
     args = ap.parse_args()
 
-    rng = random.Random(args.seed)
     vec = Vectors()
-    words = card_words()
-
-    board, clues, at = None, [], 0
-    while True:
-        if board is None:
-            board = Board.deal(words, rng)
-            clues = rank(board, vec, top=args.top)
-            at = 0
-            draw(board)
-            print(HELP)
-
-        try:
-            cmd = input("\n> ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-
-        if cmd in ("q", "quit", "exit"):
-            return
-        elif cmd in ("n", "new"):
-            board = None
-        elif cmd in ("b", "board"):
-            draw(board)
-        elif cmd == "":
-            if at >= len(clues):
-                print("  that's the lot, n for a new board")
-                continue
-            draw_clue(clues[at], at + 1)
-            at += 1
-        elif cmd.isdigit():
-            for i, c in enumerate(clues[: int(cmd)]):
-                draw_clue(c, i + 1)
-            at = max(at, int(cmd))
-        else:
-            print(HELP)
+    board = Board.deal(card_words(), random.Random(args.seed))
+    try:
+        with Terminal() as t:
+            play(t, board, vec)
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

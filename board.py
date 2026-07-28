@@ -1,29 +1,37 @@
-"""The 25 words, the key, and drawing both."""
+"""The 25 words, the key, and drawing them."""
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-OURS, THEIRS, NEUTRAL, ASSASSIN = range(4)
+RED, BLUE, NEUTRAL, ASSASSIN = range(4)
 
-COUNTS = {OURS: 9, THEIRS: 8, NEUTRAL: 7, ASSASSIN: 1}
-NAMES = {OURS: "us", THEIRS: "them", NEUTRAL: "neutral", ASSASSIN: "assassin"}
+COUNTS = {RED: 9, BLUE: 8, NEUTRAL: 7, ASSASSIN: 1}
+NAMES = {RED: "red", BLUE: "blue", NEUTRAL: "neutral", ASSASSIN: "the assassin"}
+TEAMS = (RED, BLUE)
+FIRST = RED  # whoever has the nine goes first
 
 RESET = "\x1b[0m"
 INK = {
-    OURS: "\x1b[48;5;131m\x1b[38;5;231m",
-    THEIRS: "\x1b[48;5;67m\x1b[38;5;231m",
+    RED: "\x1b[48;5;131m\x1b[38;5;231m",
+    BLUE: "\x1b[48;5;67m\x1b[38;5;231m",
     NEUTRAL: "\x1b[48;5;180m\x1b[38;5;235m",
     ASSASSIN: "\x1b[48;5;236m\x1b[38;5;231m",
 }
+FACEDOWN = "\x1b[48;5;253m\x1b[38;5;235m"
 
+# geometry, so a click can be turned back into a card
 CELL = 13
-GAP = " "
+GAP = 1
+ROW = 4         # three lines of card then a blank one
+GRID_TOP = 3    # first screen row the grid sits on, 1 based
+GRID_LEFT = 1
 
 
 @dataclass
 class Board:
     words: list
     key: list
+    revealed: set = field(default_factory=set)
 
     @classmethod
     def deal(cls, wordlist, rng=random):
@@ -32,40 +40,76 @@ class Board:
         rng.shuffle(key)
         return cls(words, key)
 
-    def of(self, role):
-        return [w for w, r in zip(self.words, self.key) if r == role]
+    def live(self):
+        return [i for i in range(25) if i not in self.revealed]
 
-    def indices(self, role):
-        return [i for i, r in enumerate(self.key) if r == role]
+    def live_of(self, role):
+        return [i for i in self.live() if self.key[i] == role]
+
+    def left(self, role):
+        return len(self.live_of(role))
+
+    def find(self, word):
+        want = word.strip().lower()
+        for i, w in enumerate(self.words):
+            if w.lower() == want:
+                return i
+        return None
 
 
-def _cell(text, role, hidden):
-    ink = "\x1b[48;5;253m\x1b[38;5;235m" if hidden else INK[role]
-    return f"{ink}{text.center(CELL)}{RESET}"
+def other(team):
+    return BLUE if team == RED else RED
 
 
-def grid(board, hidden=False):
-    """The 5x5 as it sits on the table, coloured in as the spymaster sees it."""
+def winner(board):
+    """Whoever has run out of cards to find has found them all."""
+    for t in TEAMS:
+        if board.left(t) == 0:
+            return t
+    return None
+
+
+def cell_at(col, row):
+    """Screen position back to a card index, or None if it wasn't on one."""
+    dc, dr = col - GRID_LEFT, row - GRID_TOP
+    if dc < 0 or dr < 0:
+        return None
+    if dc % (CELL + GAP) >= CELL:
+        return None                     # the gutter between two cards
+    if dr % ROW == ROW - 1:
+        return None                     # the blank line under a row
+    c, r = dc // (CELL + GAP), dr // ROW
+    return r * 5 + c if c < 5 and r < 5 else None
+
+
+def _cell(text, role, face_up):
+    return f"{INK[role] if face_up else FACEDOWN}{text.center(CELL)}{RESET}"
+
+
+def grid(board, reveal_all=False):
+    """The 5x5. Words always show, it's the colours that are secret."""
     out = []
-    for row in range(5):
-        cells = [(board.words[row * 5 + c], board.key[row * 5 + c]) for c in range(5)]
-        out.append(GAP.join(_cell("", r, hidden) for _, r in cells))
-        out.append(GAP.join(_cell(w, r, hidden) for w, r in cells))
-        out.append(GAP.join(_cell("", r, hidden) for _, r in cells))
+    for r in range(5):
+        for line in range(3):
+            cells = []
+            for c in range(5):
+                i = r * 5 + c
+                up = reveal_all or i in board.revealed
+                cells.append(_cell(board.words[i] if line == 1 else "", board.key[i], up))
+            out.append((" " * GAP).join(cells))
         out.append("")
     return "\n".join(out)
 
 
 def keycard(board):
     """The little card only the spymasters get to look at."""
-    edge = INK[OURS] + "  " + RESET
+    edge = INK[FIRST] + "  " + RESET
     inner = []
     for row in range(5):
         blocks = [INK[board.key[row * 5 + c]] + "    " + RESET for c in range(5)]
         line = edge + " " + " ".join(blocks) + " " + edge
         inner += [line, line]
-    width = 5 * 4 + 4 * 1 + 2
-    rule = INK[OURS] + " " * (width + 4) + RESET
+    rule = INK[FIRST] + " " * (5 * 4 + 4 + 2 + 4) + RESET
     return "\n".join([rule, rule] + inner + [rule, rule])
 
 
@@ -74,7 +118,7 @@ def side_by_side(left, right, pad=4):
     ls += [""] * (len(rs) - len(ls))
     rs += [""] * (len(ls) - len(rs))
     # can't use len() to line things up, the colour codes aren't printable
-    width = 5 * CELL + 4 * len(GAP)
+    width = 5 * CELL + 4 * GAP
     return "\n".join(l + " " * (width - _visible(l) + pad) + r for l, r in zip(ls, rs))
 
 

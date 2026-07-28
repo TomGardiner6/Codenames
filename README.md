@@ -60,6 +60,12 @@ Scoring:
 Since the other player may make mistakes, we should simply optimise for each turn in
 isolation.
 
+Still true, and still the biggest simplification in here. It plays every turn as though
+it were the only one, so it has no idea whether it's winning. The obvious hole is that
+an opponent card is worth about the same to it all game, when in fact if they're down to
+their last one, handing it over loses on the spot and it should be treated exactly like
+the assassin rather than as a bad turn.
+
 Raw cosine is the wrong scale to score on. The gap between 0.85 and 0.80 is worth
 almost nothing because they'll get both, and the gap between 0.30 and 0.25 is worth
 nothing either because they'll get neither. Only the gaps in the middle, where it flips
@@ -191,17 +197,31 @@ Running it:
 Both downloads are big, 325MB and 862MB, and both are read straight out of the archive
 rather than unpacked.
 
-Deals a board, draws it with the key colours on, then enter for the next clue, n for a
-new board, q to quit. First run builds a cache off the gz and takes a few seconds. The
-search itself is about 10ms.
+Deals a board face down and spymasters for both sides. It gives red a clue, you guess
+for red, and when the turn ends it gives blue a clue and you guess for blue. Guess wrong
+and the turn passes, guess the assassin and that team loses on the spot, and either way
+the whole key comes up at the end. Enter stops guessing early, q gives up.
+
+Pick a card by clicking on it, or type the word if the terminal won't play. Terminals
+report mouse clicks if you ask them to, which almost nobody knows - see term.py. The
+arithmetic back from a click to a card is why board.py pins the grid to a fixed spot on
+screen and clears rather than scrolls.
+
+First run builds a cache off the archives and takes a few seconds. Each clue is about
+15ms, so it comes back instantly.
 
 Layout:
 
     data/       wordlist, cached vectors
     vectors.py  loading and similarity
-    board.py    the 25 words and the key, and drawing them
+    board.py    the 25 words, the key, and drawing them
     clue.py     the search
-    main.py     cli
+    term.py     raw mode and mouse clicks
+    main.py     the game
+
+Cards that have been turned over drop out of the search completely, rather than sitting
+there soaking up probability and frightening it off good clues. They also stop counting
+as illegal clues, since a covered word isn't on the table any more.
 
 Later:
 
