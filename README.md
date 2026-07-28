@@ -207,6 +207,14 @@ report mouse clicks if you ask them to, which almost nobody knows - see term.py.
 arithmetic back from a click to a card is why board.py pins the grid to a fixed spot on
 screen and clears rather than scrolls.
 
+A clue of n gets n+1 guesses. That's the real rule, everyone gets one bonus guess on top
+of the number, but on screen it looks like an off by one, so the counter spells it out
+and says which one is the bonus.
+
+After the reveal it lists every clue it gave, what it meant by it, and what you actually
+took. Worth looking at. It's also where you notice it giving the same clue twice, since
+nothing carries between turns and the words it wanted are still sitting there.
+
 First run builds a cache off the archives and takes a few seconds. Each clue is about
 15ms, so it comes back instantly.
 

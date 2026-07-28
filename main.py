@@ -20,30 +20,56 @@ def header(board, team):
 def draw(t, board, team, clue, left, note):
     body = [header(board, team), "", grid(board)]
     if clue:
+        # A clue of n gets n+1 guesses, the last one being the bonus. That's the
+        # actual rule and not an off by one, but it reads like one, so say it.
+        total = clue.number + 1
+        this = total - left + 1
+        bonus = "  (the bonus)" if this == total else ""
         body.append(f"  {INK[team]} {clue.word} {clue.number} {RESET}"
-                    f"   {left} guess{'' if left == 1 else 'es'} left")
+                    f"   +1 bonus, so guess {this} of {total}{bonus}")
     else:
         body.append("  no clue passes the safety limits, turn passes")
     body += ["", f"  {note}" if note else "", f"  {HELP}"]
     t.write(CLEAR + HIDE_CURSOR + "\n".join(body) + "\n")
 
 
-def finish(t, board, won, why):
+def recap(board, history):
+    """What it was actually going for, next to what you took."""
+    out = ["  what it meant by each clue", ""]
+    for team, clue, picked in history:
+        who = f"{INK[team]} {NAMES[team]} {RESET}"
+        if clue is None:
+            out.append(f"  {who}  passed, nothing safe to say")
+            continue
+        meant = " · ".join(w.lower() for w in clue.targets)
+        took = " ".join(f"{INK[board.key[i]]} {board.words[i].lower()} {RESET}"
+                        for i in picked) or " nothing "
+        out.append(f"  {who}  {clue.word} {clue.number}")
+        out.append(f"          meant  {meant}")
+        out.append(f"          took   {took}")
+        out.append("")
+    return "\n".join(out)
+
+
+def finish(t, board, won, why, history):
     board.revealed = set(range(25))
-    body = [f"{INK[won]} {NAMES[won]} wins {RESET}  {why}", "",
+    title = f"{INK[won]} {NAMES[won]} wins {RESET}  {why}" if won is not None else f"  {why}"
+    body = [title, "",
             side_by_side(grid(board, reveal_all=True), keycard(board)),
-            "", "  any key"]
+            "", "  any key to see what it was going for"]
     t.write(CLEAR + "\n".join(body) + "\n")
+    t.read()
+    t.write(CLEAR + recap(board, history) + "\n  any key\n")
     t.read()
 
 
 def play(t, board, vec):
-    team = FIRST
-    note = ""
+    team, note, history = FIRST, "", []
     while True:
         clues = rank(board, vec, team, top=1)
         clue = clues[0] if clues else None
         left = clue.number + 1 if clue else 0
+        picked = []
 
         while left > 0:
             draw(t, board, team, clue, left, note)
@@ -57,7 +83,8 @@ def play(t, board, vec):
             else:
                 said = val.strip().lower()
                 if said in ("q", "quit"):
-                    return None
+                    history.append((team, clue, picked))
+                    return finish(t, board, None, "gave up", history)
                 if said == "":
                     break
                 i = board.find(said)
@@ -69,18 +96,23 @@ def play(t, board, vec):
                     continue
 
             board.revealed.add(i)
+            picked.append(i)
             role, word = board.key[i], board.words[i]
             if role == ASSASSIN:
-                return finish(t, board, other(team), f"{NAMES[team]} found the assassin")
+                history.append((team, clue, picked))
+                return finish(t, board, other(team),
+                              f"{NAMES[team]} found the assassin", history)
             done = winner(board)
             if done is not None:
-                return finish(t, board, done, "all their cards found")
+                history.append((team, clue, picked))
+                return finish(t, board, done, "all their cards found", history)
             if role != team:
                 note = f"{word} was {NAMES[role]}, turn over"
                 break
             left -= 1
             note = f"{word}, yes"
 
+        history.append((team, clue, picked))
         team = other(team)
 
 
